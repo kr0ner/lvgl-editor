@@ -191,17 +191,39 @@ class CanvasEditor:
         else:
             height = widget.height * self.zoom_level
             
-        # Determine colors
-        bg_color = self.parse_color(widget.bg_color)
-        border_color = self.parse_color(widget.border_color) if widget.border_width > 0 else bg_color
+        # Determine colors with widget-specific defaults
+        widget_defaults = {
+            'button': {'bg_color': '#4CAF50', 'border_color': '#2E7D32'},
+            'label': {'bg_color': 'transparent', 'border_color': 'transparent'},
+            'image': {'bg_color': '#F5F5F5', 'border_color': '#E0E0E0'},
+            'slider': {'bg_color': 'transparent', 'border_color': 'transparent'},
+            'switch': {'bg_color': 'transparent', 'border_color': 'transparent'},
+            'checkbox': {'bg_color': 'transparent', 'border_color': 'transparent'},
+            'arc': {'bg_color': 'transparent', 'border_color': 'transparent'},
+            'bar': {'bg_color': '#EEEEEE', 'border_color': '#CCCCCC'},
+            'dropdown': {'bg_color': 'white', 'border_color': '#CCCCCC'},
+            'textarea': {'bg_color': 'white', 'border_color': '#CCCCCC'},
+            'led': {'bg_color': 'transparent', 'border_color': 'transparent'},
+        }
         
-        # Create widget rectangle
-        outline_width = max(1, int(widget.border_width * self.zoom_level))
-        widget_id = self.canvas.create_rectangle(
-            x, y, x + width, y + height,
-            fill=bg_color, outline=border_color, width=outline_width,
-            tags=f"widget_{widget.id}"
-        )
+        defaults = widget_defaults.get(widget.widget_type, {'bg_color': '#424242', 'border_color': '#616161'})
+        
+        # Use widget color or default
+        bg_color = widget.bg_color if widget.bg_color != '#000000' else defaults['bg_color']
+        border_color = widget.border_color if widget.border_color != '#000000' else defaults['border_color']
+        
+        bg_color = self.parse_color(bg_color)
+        border_color = self.parse_color(border_color)
+        
+        # Don't draw background for transparent widgets
+        if bg_color != 'transparent':
+            # Create widget rectangle
+            outline_width = max(1, int(widget.border_width * self.zoom_level)) if border_color != 'transparent' else 0
+            widget_id = self.canvas.create_rectangle(
+                x, y, x + width, y + height,
+                fill=bg_color, outline=border_color, width=outline_width,
+                tags=f"widget_{widget.id}"
+            )
         
         # Add widget-specific content
         self.draw_widget_content(widget, x, y, width, height)
@@ -629,8 +651,58 @@ class CanvasEditor:
         if color_str.startswith('0x'):
             # Convert hex color
             hex_color = color_str[2:]
-            return f"#{hex_color}"
-        return color_str
+            if len(hex_color) == 6:
+                return f"#{hex_color}"
+            elif len(hex_color) == 3:
+                # Convert RGB to RRGGBB
+                return f"#{hex_color[0]*2}{hex_color[1]*2}{hex_color[2]*2}"
+        elif color_str.startswith('#'):
+            return color_str
+        else:
+            # Named colors
+            color_map = {
+                'red': '#FF0000', 'green': '#00FF00', 'blue': '#0000FF',
+                'white': '#FFFFFF', 'black': '#000000', 'gray': '#808080',
+                'yellow': '#FFFF00', 'cyan': '#00FFFF', 'magenta': '#FF00FF'
+            }
+            return color_map.get(color_str.lower(), '#FFFFFF')
+            
+    def load_image(self, src: str, width: int, height: int):
+        """Load and resize image for display"""
+        try:
+            from PIL import Image, ImageTk
+            import os
+            
+            # Try to find the image file
+            image_path = src
+            if not os.path.isabs(src):
+                # Try relative to project directory
+                base_paths = [
+                    os.getcwd(),
+                    os.path.join(os.getcwd(), 'images'),
+                    os.path.join(os.getcwd(), 'assets'),
+                    os.path.dirname(os.path.abspath(__file__))
+                ]
+                
+                for base_path in base_paths:
+                    test_path = os.path.join(base_path, src)
+                    if os.path.exists(test_path):
+                        image_path = test_path
+                        break
+                        
+            if not os.path.exists(image_path):
+                return None
+                
+            # Load and resize image
+            pil_image = Image.open(image_path)
+            pil_image = pil_image.resize((max(1, width - 4), max(1, height - 4)), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage
+            return ImageTk.PhotoImage(pil_image)
+            
+        except Exception as e:
+            print(f"Error loading image {src}: {e}")
+            return None
         
     def get_widget_info(self, widget_type: str) -> Dict[str, Any]:
         """Get widget information from the widget library"""
@@ -1018,6 +1090,26 @@ class CanvasEditor:
         result = {}
         for page_id, page_widgets in self.widgets.items():
             result[page_id] = [widget.to_dict() for widget in page_widgets]
+        return result
+        
+    def get_widgets_for_page(self, page_id: str) -> List[Dict]:
+        """Get widgets data for a specific page (for live preview)"""
+        if page_id not in self.widgets:
+            return []
+        
+        result = []
+        for widget in self.widgets[page_id]:
+            widget_data = widget.to_dict()
+            # Add additional properties for preview
+            widget_data.update({
+                'widget_type': widget.widget_type,
+                'id': widget.id,
+                'x': widget.x,
+                'y': widget.y,
+                'width': widget.width,
+                'height': widget.height
+            })
+            result.append(widget_data)
         return result
         
     def load_widgets(self, widgets_data: Dict[str, List[Dict]]):
